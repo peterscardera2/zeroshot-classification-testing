@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "app"
+version = "0.1.0"
+description = ""
+authors = ["Peter Scardera <peter.scardera@lightspeedhq.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+fastapi = "^0.111.0"
+transformers = "^4.41.2"
+torch = "^2.3.0"
+pytest = "^8.2.2"
+python-dotenv = "^1.0.1"
+sentencepiece = "^0.2.0"
+pandas = "^2.2.2"
+requests = "^2.32.3"
+httpx = "^0.27.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

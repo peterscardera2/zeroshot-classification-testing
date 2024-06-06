@@ -1,6 +1,6 @@
 from enum import Enum
 import os
-from typing import Dict
+from typing import Dict, List
 from dotenv import load_dotenv
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -21,7 +21,7 @@ load_dotenv()
 
 item_classification_router = APIRouter()
 
-HUGGINGFACE_TOKEN = os.getenv("HUGGINGFACE_TOKEN")
+# HUGGINGFACE_TOKEN = os.getenv("HUGGINGFACE_TOKEN")
 
 HfFolder.save_token("HUGGINGFACE_TOKEN")
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"  # for MPS fallback
@@ -34,6 +34,18 @@ class ItemType(Enum):
 
 class Item(BaseModel):
     item_name: str
+    accounting_group: str
+
+
+class ClassifyItemsRequest(BaseModel):
+    items: List[Item]
+
+
+class ClassifyItemsResponseDto:
+    def __init__(self, item_name, food_score, beverage_score):
+        self.item_name = item_name
+        self.food_score = str(food_score)
+        self.beverage_score = str(beverage_score)
 
 
 LLAMA3_8B = "meta-llama/Meta-Llama-3-8B"
@@ -72,7 +84,6 @@ async def classify_item_llamapy(item: Item):
 
     for key in inputs:  # moving each tensor to the device
         inputs[key] = inputs[key].to(device)
-
     try:
         with torch.no_grad():
             outputs = model(**inputs)
@@ -146,24 +157,36 @@ classifier_deberta_large_v3_zero_shot = pipeline(
 )
 
 
-@item_classification_router.post("/classify-item")
-async def classify_item_debert_pipeline(item: Item):
+@item_classification_router.post("/classify-items")
+async def classify_items_debert_pipeline(items: ClassifyItemsRequest):
+    classifyItemsResponseDto = []
     candidate_labels = [ItemType.FOOD.value, ItemType.BEVERAGE.value]
-    try:
-        results = classifier_deberta_large_v3_zero_shot(
-            item.item_name, candidate_labels
-        )
-        labels = results["labels"]
-        scores = results["scores"]
-        # classifier seems to return results where the order of the labels directly correspondto the order of the scores
-        food_score = scores[labels.index("food")]
-        beverage_score = scores[labels.index("beverage")]
-        return {"food_score": str(food_score), "beverage_score": str(beverage_score)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    # it should provide acontext on how the model should understand the labels in relation to the input text
+    hypothesis_template = "Given that this item is from the '{0}' category, it is typically consumed as a type of {{}}."
+    for item in items.items:
+        try:
+            formated_hypo = hypothesis_template.format(item.accounting_group)
+            results = classifier_deberta_large_v3_zero_shot(
+                item.item_name,
+                candidate_labels,
+                hypothesis_template=formated_hypo,
+                multi_label=False,  # False;theyre mutually exclusive; one or the other;
+            )
+            labels = results["labels"]
+            scores = results["scores"]
+            # classifier seems to return results where the order of the labels directly correspondto the order of the scores
 
+            food_score = scores[labels.index("food")]
+            beverage_score = scores[labels.index("beverage")]
+            item_result = ClassifyItemsResponseDto(
+                item_name=item.item_name,
+                food_score=food_score,
+                beverage_score=beverage_score,
+            )
+            classifyItemsResponseDto.append(item_result)
+        except Exception as e:
+            classifyItemsResponseDto.append(
+                {"item_name": item.item_name, "error": str(e)}
+            )
 
-tokenizer = AutoTokenizer.from_pretrained("MoritzLaurer/deberta-v3-large-zeroshot-v2.0")
-model = AutoModelForSequenceClassification.from_pretrained(
-    "MoritzLaurer/deberta-v3-large-zeroshot-v2.0"
-)
+    return classifyItemsResponseDto
